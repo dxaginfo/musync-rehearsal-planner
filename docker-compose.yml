@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-musync}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-musyncpwd}
+      POSTGRES_DB: ${POSTGRES_DB:-musync_db}
+      PGDATA: /data/postgres
+    volumes:
+      - postgres_data:/data/postgres
+    restart: unless-stopped
+    networks:
+      - musync-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U musync"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and socket.io
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - musync-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API Server
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-musync}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-musyncpwd}
+      DB_NAME: ${POSTGRES_DB:-musync_db}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-musync_jwt_secret_change_in_production}
+      CLIENT_URL: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - musync-network
+    volumes:
+      - ./server:/usr/src/app
+      - /usr/src/app/node_modules
+
+  # Frontend React App
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - musync-network
+    volumes:
+      - ./client:/usr/src/app
+      - /usr/src/app/node_modules
+
+networks:
+  musync-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
